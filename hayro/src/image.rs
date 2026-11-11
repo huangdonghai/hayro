@@ -438,6 +438,7 @@ impl Renderer<'_> {
         if self.misses_target(props.transform.transform_rect_bbox(local)) {
             return;
         }
+        self.add_content_bounds(props.transform.transform_rect_bbox(local));
 
         self.apply_image_props(&props);
         let mut transform = props.transform;

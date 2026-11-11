@@ -43,7 +43,7 @@ use hayro_interpret::font::{GlyphRun, HintingCache};
 use hayro_interpret::hayro_syntax::Pdf;
 use hayro_interpret::hayro_syntax::page::Page;
 use hayro_interpret::util::{RectExt, TransformExt};
-use hayro_interpret::{BlendMode, Context, DrawMode, DrawProps, ImageDrawProps, SoftMask};
+use hayro_interpret::{BlendMode, Context, DrawMode, DrawProps, ImageDrawProps, Paint, SoftMask};
 use hayro_interpret::{ClipPath, interpret_page};
 use kurbo::{Affine, BezPath, Rect};
 use pic_scale::Scaler;
@@ -119,6 +119,8 @@ pub(crate) struct Renderer<'a> {
     pub(crate) suppress_dark: bool,
     /// 图案内部绘制时继承外层的颜色角色。
     pub(crate) pattern_role: Option<PaintRole>,
+    /// 实际绘制内容的包围盒（设备像素）。
+    pub(crate) content_bounds: Option<Rect>,
 }
 
 impl<'r> Renderer<'r> {
@@ -131,7 +133,41 @@ impl<'r> Renderer<'r> {
             in_type3_glyph: false,
             suppress_dark: false,
             pattern_role: None,
+            content_bounds: None,
         }
+    }
+
+    /// 记录一次绘制覆盖的设备空间矩形，求并集并裁剪到页面范围内。
+    pub(crate) fn add_content_bounds(&mut self, bbox: Rect) {
+        let page = Rect::new(0.0, 0.0, self.ctx.width() as f64, self.ctx.height() as f64);
+        let bbox = bbox.intersect(page);
+        if bbox.width() <= 0.0 || bbox.height() <= 0.0 {
+            return;
+        }
+        self.content_bounds = Some(match self.content_bounds {
+            Some(existing) => existing.union(bbox),
+            None => bbox,
+        });
+    }
+
+    /// 判断一次填充是不是铺满页面的浅色底，这种底不应计入内容包围盒。
+    pub(crate) fn is_page_background_fill(&self, props: &DrawProps<'_>, bbox: Rect) -> bool {
+        if props.soft_mask.is_some() {
+            return false;
+        }
+
+        let page = Rect::new(0.0, 0.0, self.ctx.width() as f64, self.ctx.height() as f64);
+        let covered = bbox.intersect(page);
+        if covered.width() * covered.height() < page.width() * page.height() * 0.95 {
+            return false;
+        }
+
+        let Paint::Color(color) = &props.paint else {
+            return false;
+        };
+        let [r, g, b, a] = color.to_rgba().components();
+
+        a > 0.99 && r > 0.9 && g > 0.9 && b > 0.9
     }
 
     /// 按角色把 RGBA 分量映射到暗色主题；未开启时原样返回。
@@ -358,6 +394,31 @@ pub fn render<'a>(
     render_settings: &RenderSettings,
     pixmap_settings: &PixmapSettings,
 ) -> Pixmap {
+    render_with_bounds(
+        page,
+        cache,
+        interpreter_settings,
+        render_settings,
+        pixmap_settings,
+    )
+    .0
+}
+
+/// Render a page to a pixmap and return the bounding box of the content that was
+/// actually drawn.
+///
+/// The bounds are in device pixels of the returned pixmap and do not include a
+/// full-page light background fill. `None` means nothing was drawn. The box is
+/// conservative: it may be larger than the visible ink (for example when a
+/// clipping path or a soft mask hides part of a shape), but it never cuts
+/// visible content.
+pub fn render_with_bounds<'a>(
+    page: &'a Page<'a>,
+    cache: &RenderCache<'a>,
+    interpreter_settings: &InterpreterSettings,
+    render_settings: &RenderSettings,
+    pixmap_settings: &PixmapSettings,
+) -> (Pixmap, Option<Rect>) {
     let (width, height) = page.render_dimensions();
     let mut ctx = RenderContext::new(
         (width * pixmap_settings.x_scale) as u16,
@@ -367,7 +428,7 @@ pub fn render<'a>(
         pixmap_settings.x_scale as f64,
         pixmap_settings.y_scale as f64,
     ) * page.initial_transform(true).to_kurbo();
-    render_into(
+    let bounds = render_into_inner(
         page,
         cache,
         interpreter_settings,
@@ -386,7 +447,7 @@ pub fn render<'a>(
             ..Default::default()
         },
     );
-    pixmap
+    (pixmap, bounds)
 }
 
 /// Render a page into the given [`RenderContext`] with the
@@ -402,6 +463,24 @@ pub fn render_into<'a>(
     ctx: &mut RenderContext,
     transform: Affine,
 ) {
+    let _ = render_into_inner(
+        page,
+        cache,
+        interpreter_settings,
+        render_settings,
+        ctx,
+        transform,
+    );
+}
+
+fn render_into_inner<'a>(
+    page: &'a Page<'a>,
+    cache: &RenderCache<'a>,
+    interpreter_settings: &InterpreterSettings,
+    render_settings: &RenderSettings,
+    ctx: &mut RenderContext,
+    transform: Affine,
+) -> Option<Rect> {
     let target = Rect::new(0.0, 0.0, ctx.width() as f64, ctx.height() as f64);
     let mut state = Context::new(
         transform,
@@ -435,6 +514,8 @@ pub fn render_into<'a>(
     if clip_crop_box {
         device.pop_clip();
     }
+
+    device.content_bounds
 }
 
 // Just a convenience method for testing.

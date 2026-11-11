@@ -228,6 +228,7 @@ impl Renderer<'_> {
                     let id = outline.identifier().cache_key();
                     let (path, transform, hinted) =
                         self.fill_outline(outline, id, props.transform * glyph.transform(), hint);
+                    self.add_content_bounds(transform.transform_rect_bbox(path.bounding_box()));
 
                     if !use_cache || !self.fill_cached_glyph(id, hinted, &path, transform, color) {
                         self.ctx.set_paint(color);
@@ -241,6 +242,9 @@ impl Renderer<'_> {
                 let outlines = self.transformed_fill_outlines(glyph_run, props.transform);
                 let clip_path = self.begin_fill_run(props, Self::outline_bbox(&outlines));
                 for outline in &outlines {
+                    self.add_content_bounds(
+                        props.transform.transform_rect_bbox(outline.bounding_box()),
+                    );
                     self.ctx.fill_path(outline);
                 }
                 self.finish_run(clip_path);
@@ -264,6 +268,13 @@ impl Renderer<'_> {
 
                     let outline = self.cached_outline(outline, outline.identifier().cache_key());
                     let outline = glyph.transform() * outline.as_ref().clone();
+                    let extent = stroke_props.line_width as f64 / 2.0
+                        * stroke_props.miter_limit.max(1.0) as f64;
+                    self.add_content_bounds(
+                        props
+                            .transform
+                            .transform_rect_bbox(outline.bounding_box().inflate(extent, extent)),
+                    );
                     self.ctx.stroke_path(&outline);
                 }
                 self.finish_run(clip_path);
@@ -272,7 +283,14 @@ impl Renderer<'_> {
                 let outlines = self.transformed_outlines(glyph_run);
                 let clip_path =
                     self.begin_stroke_run(props, stroke_props, Self::outline_bbox(&outlines));
+                let extent =
+                    stroke_props.line_width as f64 / 2.0 * stroke_props.miter_limit.max(1.0) as f64;
                 for outline in &outlines {
+                    self.add_content_bounds(
+                        props
+                            .transform
+                            .transform_rect_bbox(outline.bounding_box().inflate(extent, extent)),
+                    );
                     self.ctx.stroke_path(outline);
                 }
                 self.finish_run(clip_path);

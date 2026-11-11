@@ -72,6 +72,7 @@ impl Renderer<'_> {
         if self.misses_target(props.transform.transform_rect_bbox(bbox)) {
             return;
         }
+        self.add_content_bounds(props.transform.transform_rect_bbox(bbox));
 
         let clip_path = self.set_paint(&props.paint, || path.bounding_box(), true, role);
         if let Some(clip_path) = clip_path.as_ref() {
@@ -97,6 +98,11 @@ impl Renderer<'_> {
     ) {
         self.ctx.set_fill_rule(convert_fill_rule(fill_rule));
         self.apply_draw_props(&props);
+
+        let bbox = props.transform.transform_rect_bbox(path.bounding_box());
+        if !self.is_page_background_fill(&props, bbox) {
+            self.add_content_bounds(bbox);
+        }
 
         let clip_path = self.set_paint(&props.paint, || path.bounding_box(), false, role);
         if let Some(clip_path) = clip_path.as_ref() {
@@ -144,6 +150,11 @@ impl Renderer<'_> {
             DrawMode::Fill(fill_rule) => {
                 self.ctx.set_fill_rule(convert_fill_rule(*fill_rule));
                 self.apply_draw_props(&props);
+
+                let bbox = props.transform.transform_rect_bbox(*rect);
+                if !self.is_page_background_fill(&props, bbox) {
+                    self.add_content_bounds(bbox);
+                }
 
                 let role = self.fill_role(*rect, props.transform);
                 let clip_path = self.set_paint(&props.paint, || *rect, false, role);

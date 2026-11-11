@@ -1,4 +1,5 @@
 use crate::Renderer;
+use crate::dark::PaintRole;
 use fearless_simd::{Level, Select, Simd, SimdBase, SimdInto, mask8x32, u8x32, u16x16};
 use hayro_interpret::util::x_y_advances;
 use hayro_interpret::{FillRule, ImageData, ImageDrawProps, LumaData, Paint, RgbData};
@@ -534,7 +535,12 @@ impl Renderer<'_> {
                                 );
                                 self.ctx.set_transform(transform);
 
-                                let clip_path = self.set_paint(paint, || stencil_rect, false);
+                                let clip_path = self.set_paint(
+                                    paint,
+                                    || stencil_rect,
+                                    false,
+                                    PaintRole::Surface,
+                                );
                                 if let Some(clip_path) = clip_path.as_ref() {
                                     self.push_clip_path_inner(clip_path, FillRule::NonZero);
                                 }

@@ -1,4 +1,5 @@
 use crate::Renderer;
+use crate::dark::PaintRole;
 use hayro_interpret::pattern::TilingPattern;
 use hayro_interpret::util::x_y_advances;
 use kurbo::{Affine, Rect};
@@ -13,6 +14,7 @@ impl Renderer<'_> {
         t: &TilingPattern<'_>,
         area: Rect,
         is_stroke: bool,
+        role: PaintRole,
     ) -> (Image, Affine) {
         let area = t.matrix.inverse().transform_rect_bbox(area);
         let (x_advance, y_advance) = x_y_advances(&t.matrix);
@@ -30,7 +32,7 @@ impl Renderer<'_> {
         );
 
         let image = Image {
-            image: ImageSource::Pixmap(Arc::new(self.render_tiling(t, &x, &y, is_stroke))),
+            image: ImageSource::Pixmap(Arc::new(self.render_tiling(t, &x, &y, is_stroke, role))),
             sampler: ImageSampler {
                 x_extend: x.extend,
                 y_extend: y.extend,
@@ -55,12 +57,15 @@ impl Renderer<'_> {
         x: &TileAxis,
         y: &TileAxis,
         is_stroke: bool,
+        role: PaintRole,
     ) -> Pixmap {
         let to_texture =
             Affine::scale_non_uniform(x.scale, y.scale) * Affine::translate((-x.start, -y.start));
         let mut ctx = self.child_context(x.size, y.size);
         let mut renderer = Renderer::new(&mut ctx, self.global);
         renderer.inside_pattern = true;
+        renderer.pattern_role = Some(role);
+        renderer.suppress_dark = self.suppress_dark;
 
         for j in y.copies.clone() {
             for i in x.copies.clone() {

@@ -1,3 +1,4 @@
+use crate::dark::PaintRole;
 use crate::{Renderer, convert_fill_rule};
 use hayro_interpret::font::{Glyph, GlyphRun, OutlineGlyph};
 use hayro_interpret::hayro_cmap::WritingMode;
@@ -24,7 +25,7 @@ impl Renderer<'_> {
                     self.fill_outline(glyph, id, props.transform * transform, hint);
                 let props = DrawProps { transform, ..props };
 
-                self.fill_path(outline.as_ref(), props, FillRule::NonZero);
+                self.fill_path(outline.as_ref(), props, FillRule::NonZero, PaintRole::Text);
             }
             Glyph::Type3(glyph) => {
                 self.in_type3_glyph = true;
@@ -49,6 +50,7 @@ impl Renderer<'_> {
                     props,
                     stroke_props,
                     true,
+                    PaintRole::Text,
                 );
             }
             Glyph::Type3(glyph) => {
@@ -175,7 +177,7 @@ impl Renderer<'_> {
         self.ctx.set_fill_rule(convert_fill_rule(FillRule::NonZero));
         self.apply_draw_props(props);
 
-        let clip_path = self.set_paint(&props.paint, || bbox, false);
+        let clip_path = self.set_paint(&props.paint, || bbox, false, PaintRole::Text);
         if let Some(clip_path) = clip_path.as_ref() {
             self.push_clip_path_inner(clip_path, FillRule::NonZero);
         }
@@ -192,7 +194,7 @@ impl Renderer<'_> {
         self.apply_draw_props(props);
         self.set_stroke_properties(stroke_props, true);
 
-        let clip_path = self.set_paint(&props.paint, || bbox, true);
+        let clip_path = self.set_paint(&props.paint, || bbox, true, PaintRole::Text);
         if let Some(clip_path) = clip_path.as_ref() {
             self.push_clip_path_inner(clip_path, FillRule::NonZero);
         }
@@ -209,7 +211,9 @@ impl Renderer<'_> {
     fn fill_outline_run(&mut self, glyph_run: &GlyphRun<'_, '_>, props: &DrawProps<'_>) {
         match &props.paint {
             Paint::Color(color) => {
-                let color = color.to_rgba().to_rgba8();
+                let color = self
+                    .modify_color(color.to_rgba().components(), PaintRole::Text)
+                    .map(|v| (v * 255.0 + 0.5) as u8);
                 let color = AlphaColor::from_rgba8(color[0], color[1], color[2], color[3]);
                 let hint = self.hint(glyph_run);
                 let use_cache = self.global.glyph_caching

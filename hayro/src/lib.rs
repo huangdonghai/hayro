@@ -63,6 +63,7 @@ use vello_cpu::peniko::{Compose, Fill, Mix};
 use vello_cpu::{Mask, Pixmap, RenderContext, peniko};
 
 mod clip;
+mod dark;
 mod glyph;
 mod glyph_cache;
 mod image;
@@ -70,6 +71,9 @@ mod mask;
 mod paint;
 mod path;
 mod tiling;
+
+pub use dark::DarkTheme;
+use dark::PaintRole;
 
 type OutlineCache = FxHashMap<(u128, u32), Option<Rc<BezPath>>>;
 
@@ -83,6 +87,8 @@ pub(crate) struct GlobalState {
     aliasing_threshold: Option<u8>,
     hinting: bool,
     glyph_caching: bool,
+    dark: Option<DarkTheme>,
+    dark_cache: RefCell<FxHashMap<(u32, u8), [f32; 4]>>,
 }
 
 impl GlobalState {
@@ -97,6 +103,8 @@ impl GlobalState {
             aliasing_threshold: settings.aliasing_threshold,
             hinting: settings.hinting,
             glyph_caching: settings.glyph_caching,
+            dark: settings.dark,
+            dark_cache: RefCell::new(FxHashMap::default()),
         }
     }
 }
@@ -107,6 +115,10 @@ pub(crate) struct Renderer<'a> {
     pub(crate) inside_pattern: bool,
     pub(crate) soft_mask_cache: FxHashMap<u128, Mask>,
     pub(crate) in_type3_glyph: bool,
+    /// 软遮罩的内容是灰度透明度，不能套用暗色映射。
+    pub(crate) suppress_dark: bool,
+    /// 图案内部绘制时继承外层的颜色角色。
+    pub(crate) pattern_role: Option<PaintRole>,
 }
 
 impl<'r> Renderer<'r> {
@@ -117,6 +129,65 @@ impl<'r> Renderer<'r> {
             inside_pattern: false,
             soft_mask_cache: FxHashMap::default(),
             in_type3_glyph: false,
+            suppress_dark: false,
+            pattern_role: None,
+        }
+    }
+
+    /// 按角色把 RGBA 分量映射到暗色主题；未开启时原样返回。
+    pub(crate) fn modify_color(&self, color: [f32; 4], role: PaintRole) -> [f32; 4] {
+        let Some(theme) = self.global.dark else {
+            return color;
+        };
+        if self.suppress_dark {
+            return color;
+        }
+
+        let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let key = (
+            q(color[0]) | (q(color[1]) << 8) | (q(color[2]) << 16) | (q(color[3]) << 24),
+            role as u8,
+        );
+        if let Some(cached) = self.global.dark_cache.borrow().get(&key) {
+            return *cached;
+        }
+
+        let out = dark::modify_color(color, role, &theme);
+        self.global.dark_cache.borrow_mut().insert(key, out);
+        out
+    }
+
+    /// 根据填充在页面上的覆盖面积判断它是表面还是墨迹。
+    pub(crate) fn fill_role(&self, bbox: Rect, transform: Affine) -> PaintRole {
+        if let Some(role) = self.pattern_role {
+            return role;
+        }
+        if self.in_type3_glyph {
+            return PaintRole::Text;
+        }
+        if self.global.dark.is_none() {
+            return PaintRole::Surface;
+        }
+
+        let page_area = f64::from(self.ctx.width()) * f64::from(self.ctx.height());
+        let bbox = transform.transform_rect_bbox(bbox);
+        let ratio = (bbox.width() * bbox.height()) / page_area.max(1.0);
+
+        if ratio < 0.005 {
+            PaintRole::Ink
+        } else {
+            PaintRole::Surface
+        }
+    }
+
+    pub(crate) fn stroke_role(&self) -> PaintRole {
+        if let Some(role) = self.pattern_role {
+            return role;
+        }
+        if self.in_type3_glyph {
+            PaintRole::Text
+        } else {
+            PaintRole::Border
         }
     }
 
@@ -236,6 +307,8 @@ pub struct RenderSettings {
     pub hinting: bool,
     /// Whether rasterized glyphs should be cached and reused.
     pub glyph_caching: bool,
+    /// Dark Reader 风格的暗色映射；`None` 表示保持原样。
+    pub dark: Option<DarkTheme>,
 }
 
 impl Default for RenderSettings {
@@ -245,6 +318,7 @@ impl Default for RenderSettings {
             aliasing_threshold: None,
             hinting: true,
             glyph_caching: true,
+            dark: None,
         }
     }
 }

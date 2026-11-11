@@ -67,6 +67,8 @@ fn draw_soft_mask(
     let mut ctx = vello_cpu::RenderContext::new_with(width, height, derive_settings(&settings));
     ctx.set_aliasing_threshold(global.aliasing_threshold);
     let mut renderer = Renderer::new(&mut ctx, global);
+    // 遮罩内容只取亮度作为透明度，不能参与暗色颜色映射。
+    renderer.suppress_dark = true;
 
     let bg_color = mask.background_color().to_rgba();
     let apply_bg = bg_color.to_rgba8() != BLACK.to_rgba8().to_u8_array();

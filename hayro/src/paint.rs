@@ -1,4 +1,5 @@
 use crate::Renderer;
+use crate::dark::PaintRole;
 use hayro_interpret::Paint;
 use hayro_interpret::encode::{EncodedShadingType, texture_dimensions};
 use hayro_interpret::gradient::SvgGradientKind;
@@ -17,13 +18,16 @@ impl Renderer<'_> {
         paint: &Paint<'_>,
         path_bbox: impl Fn() -> Rect,
         is_stroke: bool,
+        role: PaintRole,
     ) -> Option<BezPath> {
         let mut paint_transform = Affine::IDENTITY;
         let mut clip_path = None;
 
         let paint: PaintType = match paint.clone() {
             Paint::Color(c) => {
-                let c = c.to_rgba().to_rgba8();
+                let c = self
+                    .modify_color(c.to_rgba().components(), role)
+                    .map(|v| (v * 255.0 + 0.5) as u8);
                 AlphaColor::from_rgba8(c[0], c[1], c[2], c[3]).into()
             }
             Paint::Pattern(p) => {
@@ -65,7 +69,7 @@ impl Renderer<'_> {
                                 .map(|stop| ColorStop {
                                     offset: stop.offset,
                                     color: DynamicColor::from_alpha_color(AlphaColor::<Srgb>::new(
-                                        stop.color,
+                                        self.modify_color(stop.color, role),
                                     )),
                                 })
                                 .collect::<Vec<_>>();
@@ -97,7 +101,9 @@ impl Renderer<'_> {
                             let (width, height, transform) =
                                 encoded.sample_texture(bbox, 1.0, |sample| {
                                     let pixel =
-                                        AlphaColor::<Srgb>::new(sample).premultiply().to_rgba8();
+                                        AlphaColor::<Srgb>::new(self.modify_color(sample, role))
+                                            .premultiply()
+                                            .to_rgba8();
                                     may_have_transparency |= pixel.a != 255;
                                     image.push(pixel);
                                 });
@@ -127,7 +133,7 @@ impl Renderer<'_> {
                         }
                     }
                     Pattern::Tiling(t) => {
-                        let (image, transform) = self.tiling_paint(&t, bbox, is_stroke);
+                        let (image, transform) = self.tiling_paint(&t, bbox, is_stroke, role);
                         paint_transform = path_transform.inverse() * transform;
 
                         PaintType::Image(image)

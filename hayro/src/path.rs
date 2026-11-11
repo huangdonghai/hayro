@@ -1,3 +1,4 @@
+use crate::dark::PaintRole;
 use crate::{Renderer, convert_fill_rule};
 use hayro_interpret::{DrawMode, DrawProps, FillRule, StrokeProps};
 use kurbo::{Affine, BezPath, Point, Rect, Shape};
@@ -60,6 +61,7 @@ impl Renderer<'_> {
         props: DrawProps<'_>,
         stroke_props: &StrokeProps,
         is_text: bool,
+        role: PaintRole,
     ) {
         self.apply_draw_props(&props);
         self.set_stroke_properties(stroke_props, is_text);
@@ -71,7 +73,7 @@ impl Renderer<'_> {
             return;
         }
 
-        let clip_path = self.set_paint(&props.paint, || path.bounding_box(), true);
+        let clip_path = self.set_paint(&props.paint, || path.bounding_box(), true, role);
         if let Some(clip_path) = clip_path.as_ref() {
             self.push_clip_path_inner(clip_path, FillRule::NonZero);
         }
@@ -86,11 +88,17 @@ impl Renderer<'_> {
         }
     }
 
-    pub(super) fn fill_path(&mut self, path: &BezPath, props: DrawProps<'_>, fill_rule: FillRule) {
+    pub(super) fn fill_path(
+        &mut self,
+        path: &BezPath,
+        props: DrawProps<'_>,
+        fill_rule: FillRule,
+        role: PaintRole,
+    ) {
         self.ctx.set_fill_rule(convert_fill_rule(fill_rule));
         self.apply_draw_props(&props);
 
-        let clip_path = self.set_paint(&props.paint, || path.bounding_box(), false);
+        let clip_path = self.set_paint(&props.paint, || path.bounding_box(), false, role);
         if let Some(clip_path) = clip_path.as_ref() {
             self.push_clip_path_inner(clip_path, fill_rule);
         }
@@ -108,16 +116,19 @@ impl Renderer<'_> {
         props: DrawProps<'a>,
         draw_mode: &DrawMode,
     ) {
+        let fill_role = self.fill_role(path.bounding_box(), props.transform);
         match draw_mode {
             DrawMode::Fill(f) => {
-                Self::fill_path(self, path, props, *f);
+                Self::fill_path(self, path, props, *f, fill_role);
             }
             DrawMode::Stroke(s) => {
-                Self::stroke_path(self, path, props, s, false);
+                let role = self.stroke_role();
+                Self::stroke_path(self, path, props, s, false, role);
             }
             DrawMode::FillAndStroke(f, s) => {
-                Self::fill_path(self, path, props.clone(), *f);
-                Self::stroke_path(self, path, props, s, false);
+                let stroke_role = self.stroke_role();
+                Self::fill_path(self, path, props.clone(), *f, fill_role);
+                Self::stroke_path(self, path, props, s, false, stroke_role);
             }
             DrawMode::Invisible => {}
         }
@@ -134,7 +145,8 @@ impl Renderer<'_> {
                 self.ctx.set_fill_rule(convert_fill_rule(*fill_rule));
                 self.apply_draw_props(&props);
 
-                let clip_path = self.set_paint(&props.paint, || *rect, false);
+                let role = self.fill_role(*rect, props.transform);
+                let clip_path = self.set_paint(&props.paint, || *rect, false, role);
                 if let Some(clip_path) = clip_path.as_ref() {
                     self.push_clip_path_inner(clip_path, *fill_rule);
                 }
@@ -147,12 +159,14 @@ impl Renderer<'_> {
             }
             DrawMode::Stroke(s) => {
                 let path = rect.to_path(0.1);
-                Self::stroke_path(self, &path, props, s, false);
+                let role = self.stroke_role();
+                Self::stroke_path(self, &path, props, s, false, role);
             }
             DrawMode::FillAndStroke(fill_rule, stroke_props) => {
                 self.draw_rect(rect, props.clone(), &DrawMode::Fill(*fill_rule));
                 let path = rect.to_path(0.1);
-                Self::stroke_path(self, &path, props, stroke_props, false);
+                let role = self.stroke_role();
+                Self::stroke_path(self, &path, props, stroke_props, false, role);
             }
             DrawMode::Invisible => {}
         }

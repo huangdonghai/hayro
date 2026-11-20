@@ -1,5 +1,3 @@
-//! Streams decoded with a memory limit.
-
 use crate::{check_memory_limit_exceeded, check_with_memory_limit};
 
 #[test]
@@ -30,4 +28,9 @@ fn symbol_dictionary_large_symbol() {
 #[test]
 fn symbol_dictionary_many_symbols() {
     check_memory_limit_exceeded("memory_symbol_dictionary_many_symbols", 8192);
+}
+
+#[test]
+fn symbol_dictionary_global() {
+    check_memory_limit_exceeded("memory_symbol_dictionary_global", 49152);
 }

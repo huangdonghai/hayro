@@ -36,7 +36,6 @@ impl Renderer<'_> {
                     let mut bbox = path_transform.transform_rect_bbox(path_bbox());
 
                     if is_stroke {
-                        // Try to account for stroke in bbox.
                         let (a1, a2) = x_y_advances(path_transform);
                         let factor = a1.length().max(a2.length()) * self.ctx.stroke().width;
                         bbox = bbox.inflate(factor, factor);
@@ -59,7 +58,7 @@ impl Renderer<'_> {
 
                         if let EncodedShadingType::RadialAxial(gradient) = &encoded.shading_type
                             && let Some(native) =
-                                gradient.as_svg_gradient(&encoded, bbox, NATIVE_GRADIENT_TOLERANCE)
+                                gradient.as_svg_gradient(&encoded, NATIVE_GRADIENT_TOLERANCE)
                         {
                             paint_transform = path_transform.inverse() * native.transform;
 
@@ -95,6 +94,7 @@ impl Renderer<'_> {
 
                             PaintType::Gradient(gradient)
                         } else {
+                            let bbox = bbox.expand();
                             let (width, height) = texture_dimensions(bbox, 1.0);
                             let mut image = Vec::with_capacity(width as usize * height as usize);
                             let mut may_have_transparency = false;
@@ -122,8 +122,8 @@ impl Renderer<'_> {
                             let image = Image {
                                 image: ImageSource::Pixmap(Arc::new(pixmap)),
                                 sampler: ImageSampler {
-                                    x_extend: peniko::Extend::Repeat,
-                                    y_extend: peniko::Extend::Repeat,
+                                    x_extend: peniko::Extend::Pad,
+                                    y_extend: peniko::Extend::Pad,
                                     quality: ImageQuality::Medium,
                                     alpha: 1.0,
                                 },

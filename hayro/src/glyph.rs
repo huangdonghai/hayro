@@ -20,7 +20,7 @@ impl Renderer<'_> {
     ) {
         match glyph {
             Glyph::Outline(glyph) => {
-                let id = glyph.identifier().cache_key();
+                let id = glyph.identifier().glyph_key();
                 let (outline, transform, _) =
                     self.fill_outline(glyph, id, props.transform * transform, hint);
                 let props = DrawProps { transform, ..props };
@@ -44,7 +44,7 @@ impl Renderer<'_> {
     ) {
         match glyph {
             Glyph::Outline(glyph) => {
-                let outline = self.cached_outline(glyph, glyph.identifier().cache_key());
+                let outline = self.cached_outline(glyph, glyph.identifier().glyph_key());
                 self.stroke_path(
                     &(transform * outline.as_ref().clone()),
                     props,
@@ -102,7 +102,6 @@ impl Renderer<'_> {
             .unwrap_or_default()
     }
 
-    // Unhinted outlines are stored with a size of 0.
     fn cached_path(
         &self,
         id: u128,
@@ -140,7 +139,7 @@ impl Renderer<'_> {
 
                 let (path, glyph_transform, _) = self.fill_outline(
                     outline,
-                    outline.identifier().cache_key(),
+                    outline.identifier().glyph_key(),
                     transform * glyph.transform(),
                     self.hint(glyph_run),
                 );
@@ -158,7 +157,7 @@ impl Renderer<'_> {
                     return None;
                 };
 
-                let outline = self.cached_outline(outline, outline.identifier().cache_key());
+                let outline = self.cached_outline(outline, outline.identifier().glyph_key());
                 Some(glyph.transform() * outline.as_ref().clone())
             })
             .collect()
@@ -225,7 +224,7 @@ impl Renderer<'_> {
                         continue;
                     };
 
-                    let id = outline.identifier().cache_key();
+                    let id = outline.identifier().glyph_key();
                     let (path, transform, hinted) =
                         self.fill_outline(outline, id, props.transform * glyph.transform(), hint);
                     self.add_content_bounds(transform.transform_rect_bbox(path.bounding_box()));
@@ -266,7 +265,7 @@ impl Renderer<'_> {
                         continue;
                     };
 
-                    let outline = self.cached_outline(outline, outline.identifier().cache_key());
+                    let outline = self.cached_outline(outline, outline.identifier().glyph_key());
                     let outline = glyph.transform() * outline.as_ref().clone();
                     let extent = stroke_props.line_width as f64 / 2.0
                         * stroke_props.miter_limit.max(1.0) as f64;

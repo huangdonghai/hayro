@@ -1,5 +1,3 @@
-//! The starting point for reading PDF files.
-
 use crate::PdfData;
 use crate::object::Object;
 use crate::page::Pages;
@@ -28,18 +26,32 @@ pub enum LoadPdfError {
     Invalid,
 }
 
+impl core::fmt::Display for LoadPdfError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Decryption(_) => write!(f, "failed to decrypt PDF"),
+            Self::Invalid => write!(f, "invalid PDF"),
+        }
+    }
+}
+
+impl core::error::Error for LoadPdfError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Decryption(e) => Some(e),
+            Self::Invalid => None,
+        }
+    }
+}
+
 #[allow(clippy::len_without_is_empty)]
 impl Pdf {
     /// Try to read the given PDF file.
-    ///
-    /// Returns `Err` if it was unable to read it.
     pub fn new(data: impl Into<PdfData>) -> Result<Self, LoadPdfError> {
         Self::new_with_password(data, "")
     }
 
     /// Try to read the given PDF file with a password.
-    ///
-    /// Returns `Err` if it was unable to read it or if the password is incorrect.
     pub fn new_with_password(
         data: impl Into<PdfData>,
         password: &str,

@@ -27,7 +27,11 @@ pub(crate) fn decode(data: &[u8], params: &ImageDecodeParams) -> Option<FilterRe
         cancel: None,
     };
 
-    let image = hayro_jpeg2000::Image::new(data, &settings).ok()?;
+    let image = params
+        .num_components
+        .filter(|_| !params.is_indexed)
+        .and_then(|channels| hayro_jpeg2000::Image::from_codestream(data, channels, &settings).ok())
+        .or_else(|| hayro_jpeg2000::Image::new(data, &settings).ok())?;
 
     let width = image.width();
     let height = image.height();
@@ -58,7 +62,6 @@ pub(crate) fn decode(data: &[u8], params: &ImageDecodeParams) -> Option<FilterRe
     let (mut data, mut alpha) = if !has_alpha {
         (bitmap, None)
     } else {
-        // Extract the alpha channel.
         let total_channels = cs.num_components() + 1;
         let mut color_channels = Vec::with_capacity(
             (bitmap.len() / total_channels as usize) * cs.num_components() as usize,
@@ -74,8 +77,7 @@ pub(crate) fn decode(data: &[u8], params: &ImageDecodeParams) -> Option<FilterRe
         (color_channels, Some(alpha_channel))
     };
 
-    // The decoded image is always 8-bit, so if necessary we have to rescale
-    // ourselves.
+    // The decoder always outputs 8 bits.
     if bpc != 8 {
         data = scale(&data, bpc, cs.num_components(), width, height)?;
         alpha = alpha.and_then(|alpha| scale(&alpha, bpc, cs.num_components(), width, height));

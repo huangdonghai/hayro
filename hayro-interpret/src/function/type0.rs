@@ -4,7 +4,6 @@ use hayro_syntax::object::Array;
 use hayro_syntax::object::Stream;
 use hayro_syntax::object::dict::keys::{BITS_PER_SAMPLE, DECODE, ENCODE, SIZE};
 
-/// A type 0 function (sampled function).
 #[derive(Debug)]
 pub(crate) struct Type0 {
     inputs: Vec<SampledInput>,
@@ -21,8 +20,22 @@ struct SampledInput {
     stride: usize,
 }
 
+impl SampledInput {
+    fn sample_position(&self, x: f32) -> (usize, Option<f32>) {
+        let last = self.size - 1;
+        let position = self.domain.map(x, self.encode).max(0.0);
+        let floor = position.floor();
+        let index = (floor as u32).min(last);
+        let fraction = position - floor;
+
+        (
+            index as usize,
+            (index < last && fraction > 0.0).then_some(fraction),
+        )
+    }
+}
+
 impl Type0 {
-    /// Create a new type 0 function.
     pub(crate) fn new(
         stream: &Stream<'_>,
         domain: &[Interval],
@@ -94,23 +107,17 @@ impl Type0 {
         })
     }
 
-    /// Evaluate a type 0 function with the given input.
     pub(crate) fn eval(&self, input: &[f32], output: &mut [f32]) {
         let mut offset = 0;
         let mut fractions = [(0, 0.0); MAX_COMPONENTS];
         let mut num_fractions = 0;
 
         for (x, input) in input.iter().zip(&self.inputs) {
-            let position = input
-                .domain
-                .map(*x, input.encode)
-                .max(0.0)
-                .min(input.size as f32 - 1.0);
-            let index = position.floor();
-            offset += index as usize * input.stride;
+            let (index, fraction) = input.sample_position(*x);
+            offset += index * input.stride;
 
-            if position != index {
-                fractions[num_fractions] = (input.stride, position - index);
+            if let Some(fraction) = fraction {
+                fractions[num_fractions] = (input.stride, fraction);
                 num_fractions += 1;
             }
         }
@@ -141,5 +148,28 @@ impl Type0 {
         for (output, decode) in output.iter_mut().zip(&self.decode) {
             *output = self.sample_range.map(*output, *decode);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SampledInput;
+    use crate::function::Interval;
+
+    #[test]
+    fn sample_index_stays_below_size_when_size_rounds() {
+        let size = 16_777_220;
+        let input = SampledInput {
+            domain: Interval { min: 0.0, max: 1.0 },
+            encode: Interval {
+                min: 0.0,
+                max: (size - 1) as f32,
+            },
+            size,
+            stride: 1,
+        };
+
+        assert_eq!(input.sample_position(1.0), (16_777_219, None));
+        assert_eq!(input.sample_position(2.0), (16_777_219, None));
     }
 }

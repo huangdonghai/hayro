@@ -107,7 +107,7 @@ impl AlphaColor {
         Self::new(components)
     }
 
-    /// Return the color as premulitplied RGBF32.
+    /// Return the color as premultiplied RGBF32.
     pub fn premultiplied(&self) -> [f32; 4] {
         [
             self.components[0] * self.components[3],
@@ -271,7 +271,6 @@ impl ColorSpaceType {
 pub struct ColorSpace(Arc<ColorSpaceType>);
 
 impl ColorSpace {
-    /// Create a new color space from the given object.
     pub(crate) fn new(object: Object<'_>, cache: &Cache) -> Option<Self> {
         Self::new_nested(object, cache, 0)
     }
@@ -280,27 +279,22 @@ impl ColorSpace {
         Some(Self(Arc::new(ColorSpaceType::new(object, cache, depth)?)))
     }
 
-    /// Create a new color space from the name.
     pub(crate) fn new_from_name(name: &Name<'_>) -> Option<Self> {
         ColorSpaceType::new_from_name(name).map(|c| Self(Arc::new(c)))
     }
 
-    /// Return the device gray color space.
     pub(crate) fn device_gray() -> Self {
         Self(Arc::new(ColorSpaceType::DeviceGray(DeviceGray)))
     }
 
-    /// Return the device RGB color space.
     pub(crate) fn device_rgb() -> Self {
         Self(Arc::new(ColorSpaceType::DeviceRgb(DeviceRgb)))
     }
 
-    /// Return the device CMYK color space.
     pub(crate) fn device_cmyk() -> Self {
         Self(Arc::new(ColorSpaceType::DeviceCmyk(DeviceCmyk)))
     }
 
-    /// Return the pattern color space.
     pub(crate) fn pattern() -> Self {
         Self(Arc::new(ColorSpaceType::Pattern(Pattern::new(
             Self::device_gray(),
@@ -314,14 +308,19 @@ impl ColorSpace {
         }
     }
 
-    /// Return `true` if the current color space is the pattern color space.
     pub(crate) fn is_pattern(&self) -> bool {
         matches!(self.0.as_ref(), ColorSpaceType::Pattern(_))
     }
 
-    /// Return `true` if the current color space is an indexed color space.
     pub(crate) fn is_indexed(&self) -> bool {
         matches!(self.0.as_ref(), ColorSpaceType::Indexed(_))
+    }
+
+    pub(crate) fn is_device_gray_or_rgb(&self) -> bool {
+        matches!(
+            self.0.as_ref(),
+            ColorSpaceType::DeviceGray(_) | ColorSpaceType::DeviceRgb(_)
+        )
     }
 
     pub(crate) fn indexed_hival(&self) -> Option<u8> {
@@ -332,7 +331,6 @@ impl ColorSpace {
         }
     }
 
-    /// Get the default decode array for the color space.
     pub(crate) fn default_decode_arr(&self, n: f32) -> SmallVec<[(f32, f32); 4]> {
         match self.0.as_ref() {
             ColorSpaceType::DeviceCmyk(_) => {
@@ -351,7 +349,6 @@ impl ColorSpace {
             ColorSpaceType::Indexed(_) => smallvec![(0.0, 2.0_f32.powf(n) - 1.0)],
             ColorSpaceType::Separation(_) => smallvec![(0.0, 1.0)],
             ColorSpaceType::DeviceN(d) => smallvec![(0.0, 1.0); d.num_components as usize],
-            // Not a valid image color space.
             ColorSpaceType::Pattern(_) => smallvec![(0.0, 1.0)],
         }
     }
@@ -389,8 +386,6 @@ impl ColorSpace {
     pub(crate) fn encode_values(&self, input: &[f32]) -> SmallVec<[u8; 4]> {
         let num_components = self.num_components() as usize;
 
-        // Make sure output always has the expected size, even for invalid
-        // conversions.
         let mut input = ColorComponents::from_slice(&input[..input.len().min(num_components)]);
         if input.len() < num_components {
             input.extend_from_slice(&self.initial_color()[input.len()..]);
@@ -412,7 +407,6 @@ impl ColorSpace {
         encode_components(&input, &ranges)
     }
 
-    /// Get the initial color of the color space.
     pub(crate) fn initial_color(&self) -> ColorComponents {
         match self.0.as_ref() {
             ColorSpaceType::DeviceCmyk(_) => smallvec![0.0, 0.0, 0.0, 1.0],
@@ -490,10 +484,6 @@ impl ColorSpace {
         let mut output = [0; 3];
         self.convert_values(input, &mut output)?;
 
-        // For separation color spaces:
-        // "The special colourant name None shall not produce any visible output.
-        // Painting operations in a Separation space with this colourant name
-        // shall have no effect on the current page."
         if self.is_none() {
             opacity = 0.0;
         }
@@ -572,6 +562,17 @@ fn f32_to_u8(val: f32) -> u8 {
     (val * 255.0 + 0.5) as u8
 }
 
+pub(crate) fn lerp_color(c0: [f32; 4], c1: [f32; 4], t: f32) -> [f32; 4] {
+    [0, 1, 2, 3].map(|i| c0[i] + (c1[i] - c0[i]) * t)
+}
+
+pub(crate) fn color_error(c0: [f32; 4], c1: [f32; 4]) -> f32 {
+    c0.iter()
+        .zip(c1)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0, f32::max)
+}
+
 #[derive(Debug, Clone)]
 /// A color.
 pub struct Color {
@@ -589,18 +590,12 @@ impl Color {
         }
     }
 
-    /// Return the color space of the color.
-    ///
-    /// If a transfer function was applied to the color, this is `DeviceRGB`.
+    /// Return the color space of the color (`DeviceRGB` once a transfer function was applied).
     pub fn color_space(&self) -> &ColorSpace {
         &self.color_space
     }
 
-    /// Return the components of the color, in its color space.
-    ///
-    /// These are the values given in the PDF, for example the operands of `scn`,
-    /// so in invalid files there can be fewer or more of them than the color space
-    /// has components.
+    /// Return the components of the color as given in the PDF.
     pub fn components(&self) -> &[f32] {
         &self.components
     }

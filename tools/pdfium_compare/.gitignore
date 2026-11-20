@@ -9,4 +9,6 @@ out7/
 out8/
 out9/
 out10/
+out_canvas/
+__pycache__/
 target/

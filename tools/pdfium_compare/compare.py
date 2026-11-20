@@ -17,7 +17,22 @@ def stable_id(path: Path, input_dir: Path) -> str:
     return "__".join(relative.with_suffix("").parts)
 
 
-def render_pdfium(pdf_path: Path, output_dir: Path, input_dir: Path, limit=None):
+def canvas_sample_scale(width: float, height: float) -> float:
+    largest_side = max(width, height)
+    area = width * height
+    side_scale = 2048 / max(1.0, largest_side)
+    area_scale = math.sqrt(4_000_000 / max(1.0, area))
+    return min(1.0, max(0.25, min(side_scale, area_scale)))
+
+
+def render_pdfium(
+    pdf_path: Path,
+    output_dir: Path,
+    input_dir: Path,
+    limit=None,
+    scale_mode="native",
+    render_scale=None,
+):
     pdf = pdfium.PdfDocument(str(pdf_path))
     results = []
     stem = stable_id(pdf_path, input_dir)
@@ -29,15 +44,20 @@ def render_pdfium(pdf_path: Path, output_dir: Path, input_dir: Path, limit=None)
     for index in range(page_count):
         page = pdf[index]
         width, height = page.get_size()
+        if render_scale is not None:
+            scale = min(1.0, max(0.25, render_scale))
+        else:
+            scale = canvas_sample_scale(width, height) if scale_mode == "canvas" else 1.0
         bitmap = page.render(
-            scale=1,
+            scale=scale,
             rotation=0,
             may_draw_forms=True,
             fill_color=(255, 255, 255, 255),
         )
         image = bitmap.to_pil().convert("RGB")
-        if image.size != (round(width), round(height)):
-            image = image.resize((round(width), round(height)), Image.Resampling.LANCZOS)
+        expected_size = (math.ceil(width * scale), math.ceil(height * scale))
+        if image.size != expected_size:
+            image = image.resize(expected_size, Image.Resampling.LANCZOS)
         path = output_dir / f"{stem}_p{index}.png"
         image.save(path)
         results.append((index, width, height, path))
@@ -50,7 +70,8 @@ def compare_images(hayro_path: Path, pdfium_path: Path):
         hayro = np.asarray(image.convert("RGB"), dtype=np.int16)
     with Image.open(pdfium_path) as image:
         pdfium = np.asarray(image.convert("RGB"), dtype=np.int16)
-    if hayro.shape != pdfium.shape:
+    size_mismatch = hayro.shape != pdfium.shape
+    if size_mismatch:
         height = min(hayro.shape[0], pdfium.shape[0])
         width = min(hayro.shape[1], pdfium.shape[1])
         hayro = hayro[:height, :width]
@@ -59,7 +80,7 @@ def compare_images(hayro_path: Path, pdfium_path: Path):
     per_pixel = diff.max(axis=2)
     total = per_pixel.size
     return {
-        "size_mismatch": hayro.shape != pdfium.shape,
+        "size_mismatch": size_mismatch,
         "width": int(hayro.shape[1]),
         "height": int(hayro.shape[0]),
         "mse": float(np.mean(np.square(diff, dtype=np.float64))),
@@ -83,22 +104,34 @@ def parse_page_paths(values):
     return pages
 
 
-def write_report(rows, report_path: Path, input_dir: Path, hayro_dir: Path, pdfium_dir: Path):
+def write_report(
+    rows,
+    report_path: Path,
+    input_dir: Path,
+    hayro_dir: Path,
+    pdfium_dir: Path,
+    source_name="Hayro",
+):
     rows.sort(key=lambda row: (-row["mae"], row["file"]))
+    source_folder = hayro_dir.name if hayro_dir != report_path.parent else "hayro"
+    pdfium_folder = pdfium_dir.name if pdfium_dir != report_path.parent else "pdfium"
     payload = []
     for row in rows:
         payload.append(
             {
                 **row,
-                "hayro_url": f"hayro/{row['hayro_image']}",
-                "pdfium_url": f"pdfium/{row['pdfium_image']}",
+                "hayro_url": f"{source_folder}/{row['hayro_image']}",
+                "pdfium_url": f"{pdfium_folder}/{row['pdfium_image']}",
             }
         )
     html = """<!doctype html><html><meta charset="utf-8"><title>Hayro vs PDFium</title>
 <style>body{font:14px system-ui;margin:20px;background:#111;color:#eee}table{border-collapse:collapse;width:100%}th,td{padding:6px;border-bottom:1px solid #333;text-align:left;vertical-align:top}th{position:sticky;top:0;background:#222}.bad{color:#ff8a80}.warn{color:#ffd180}.ok{color:#a5d6a7}img{width:240px;image-rendering:auto}input{width:100%;padding:8px;margin-bottom:10px;background:#222;color:#eee;border:1px solid #444}a{color:#80d8ff}</style>
 <h1>Hayro vs PDFium</h1><input id="q" placeholder="Filter by file name"><table><thead><tr><th>File / page</th><th>MAE</th><th>MSE</th><th>&gt;3 px</th><th>&gt;32 px</th><th>Max</th><th>Size</th><th>Hayro</th><th>PDFium</th></tr></thead><tbody id="body"></tbody></table>
 <script>const rows=__ROWS__;function fmt(n){return n.toFixed(2)}function cell(v){return `<span class="${v===0?'ok':v<1?'warn':'bad'}">${fmt(v)}</span>`}function draw(q=''){const b=document.getElementById('body');b.innerHTML=rows.filter(r=>r.file.toLowerCase().includes(q.toLowerCase())).map(r=>`<tr><td>${r.file}<br>page ${r.page}</td><td>${cell(r.mae)}</td><td>${fmt(r.mse)}</td><td>${r.changed_pixels_over_3}/${r.total_pixels}</td><td>${r.changed_pixels_over_32}</td><td>${r.max_difference}</td><td>${r.width}x${r.height}${r.size_mismatch?' MISMATCH':''}</td><td><img loading="lazy" src="${r.hayro_url}"></td><td><img loading="lazy" src="${r.pdfium_url}"></td></tr>`).join('')}document.getElementById('q').addEventListener('input',e=>draw(e.target.value));draw()</script></html>"""
-    report_path.write_text(html.replace("__ROWS__", json.dumps(payload)), encoding="utf-8")
+    html = html.replace("__ROWS__", json.dumps(payload)).replace(
+        "Hayro", source_name
+    )
+    report_path.write_text(html, encoding="utf-8")
 
 
 def rewrite_report(report_path: Path):
@@ -118,6 +151,9 @@ def main():
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--max-files", type=int)
     parser.add_argument("--rewrite-report", action="store_true")
+    parser.add_argument("--scale-mode", choices=("native", "canvas"), default="native")
+    parser.add_argument("--render-scale", type=float)
+    parser.add_argument("--source-name", default="Hayro")
     args = parser.parse_args()
 
     if args.rewrite_report:
@@ -145,7 +181,14 @@ def main():
         if not hayro_pages_for_file:
             continue
         try:
-            rendered = render_pdfium(pdf_path, pdfium_dir, input_dir, args.limit)
+            rendered = render_pdfium(
+                pdf_path,
+                pdfium_dir,
+                input_dir,
+                args.limit,
+                args.scale_mode,
+                args.render_scale,
+            )
         except Exception as error:
             failures.append({"file": stem, "error": str(error)})
             continue
@@ -167,7 +210,14 @@ def main():
             print(f"processed {pdf_index}/{len(pdf_paths)} files", flush=True)
 
     report_path = output_dir / "report.html"
-    write_report(rows, report_path, input_dir, hayro_dir, pdfium_dir)
+    write_report(
+        rows,
+        report_path,
+        input_dir,
+        hayro_dir,
+        pdfium_dir,
+        args.source_name,
+    )
     summary = {
         "files": len(pdf_paths),
         "compared_pages": len(rows),

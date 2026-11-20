@@ -62,15 +62,26 @@ impl Type0Font {
             match load_program(&font_descriptor, loader) {
                 Some(program) => (program, false, false),
                 None => {
-                    let (query, is_standard) =
-                        if let Some((standard, _)) = select_standard_font(dict, &font_descriptor) {
-                            (FontQuery::Standard(standard), true)
-                        } else {
-                            let mut query = FallbackFontQuery::new(dict);
-                            query.character_collection = character_collection.clone();
-
-                            (FontQuery::Fallback(query), false)
-                        };
+                    let standard = select_standard_font(dict, &font_descriptor);
+                    let exact_standard = standard.filter(|(_, exact)| *exact);
+                    let mut fallback_query = FallbackFontQuery::new(&descendant_font);
+                    fallback_query.character_collection = character_collection.clone();
+                    fallback_query.is_bold |= font_descriptor
+                        .get::<u32>(FONT_WEIGHT)
+                        .is_some_and(|weight| weight >= 700);
+                    let resolve_by_fallback = fallback_query
+                        .post_script_name
+                        .as_ref()
+                        .is_some_and(|name| name.to_ascii_lowercase().contains("arial"));
+                    let (query, is_standard) = if let Some((font, _)) = exact_standard {
+                        (FontQuery::Standard(font), true)
+                    } else if resolve_by_fallback {
+                        (FontQuery::Fallback(fallback_query), false)
+                    } else if let Some((font, _)) = standard {
+                        (FontQuery::Standard(font), true)
+                    } else {
+                        (FontQuery::Fallback(fallback_query), false)
+                    };
 
                     (loader.programs.resolve(&query)?, true, is_standard)
                 }

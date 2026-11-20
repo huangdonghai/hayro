@@ -90,8 +90,8 @@ def write_report(rows, report_path: Path, input_dir: Path, hayro_dir: Path, pdfi
         payload.append(
             {
                 **row,
-                "hayro_url": str(hayro_dir / row["hayro_image"]),
-                "pdfium_url": str(pdfium_dir / row["pdfium_image"]),
+                "hayro_url": f"hayro/{row['hayro_image']}",
+                "pdfium_url": f"pdfium/{row['pdfium_image']}",
             }
         )
     html = """<!doctype html><html><meta charset="utf-8"><title>Hayro vs PDFium</title>
@@ -101,6 +101,15 @@ def write_report(rows, report_path: Path, input_dir: Path, hayro_dir: Path, pdfi
     report_path.write_text(html.replace("__ROWS__", json.dumps(payload)), encoding="utf-8")
 
 
+def rewrite_report(report_path: Path):
+    text = report_path.read_text(encoding="utf-8")
+    rows = json.loads(re.search(r"const rows=(\[.*?\]);function", text).group(1))
+    for row in rows:
+        row.pop("hayro_url", None)
+        row.pop("pdfium_url", None)
+    write_report(rows, report_path, report_path.parent, report_path.parent, report_path.parent)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_dir")
@@ -108,7 +117,13 @@ def main():
     parser.add_argument("output_dir")
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--max-files", type=int)
+    parser.add_argument("--rewrite-report", action="store_true")
     args = parser.parse_args()
+
+    if args.rewrite_report:
+        rewrite_report(Path(args.output_dir) / "report.html")
+        print(Path(args.output_dir) / "report.html")
+        return
 
     input_dir = Path(args.input_dir)
     hayro_dir = Path(args.hayro_dir)

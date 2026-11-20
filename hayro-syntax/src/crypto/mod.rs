@@ -176,8 +176,8 @@ pub(crate) fn get(
         }
     };
 
-    let mut decryption_key = if revision <= 4 {
-        let key = decryption_key_rev1234(
+    let decryption_key = if revision <= 4 {
+        decryption_key_rev1234(
             password,
             encrypt_metadata,
             revision,
@@ -185,12 +185,23 @@ pub(crate) fn get(
             &owner_string,
             permissions,
             id,
-        )?;
-        authenticate_user_password_rev234(revision, &key, id, &user_string)?;
-
-        key
+        )
+        .and_then(|key| {
+            authenticate_user_password_rev234(revision, &key, id, &user_string)?;
+            Ok(key)
+        })
     } else {
-        decryption_key_rev56(dict, revision, password, &owner_string, &user_string)?
+        decryption_key_rev56(dict, revision, password, &owner_string, &user_string)
+    };
+
+    let mut decryption_key = match decryption_key {
+        Ok(key) => key,
+        Err(DecryptionError::PasswordProtected)
+            if data.as_ref().is_some_and(|data| data.is_identity()) =>
+        {
+            return Ok(Decryptor::None);
+        }
+        Err(err) => return Err(err),
     };
 
     // See pdf.js issue 19484.
@@ -269,6 +280,11 @@ pub(crate) struct DecryptorData {
 }
 
 impl DecryptorData {
+    fn is_identity(&self) -> bool {
+        self.stream_filter.cfm == DecryptorTag::None
+            && self.string_filter.cfm == DecryptorTag::None
+    }
+
     fn from_dict(dict: &Dict<'_>, default_length: u16) -> Option<Self> {
         let mut mappings = HashMap::new();
 

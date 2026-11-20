@@ -207,4 +207,20 @@ mod tests {
 
         assert_eq!(stream.decoded().unwrap().len(), 98);
     }
+
+    #[test]
+    fn identity_encryption_with_unknown_password() {
+        let data = include_bytes!("../tests/fixtures/identity-encryption.pdf");
+        let pdf = Pdf::new(data.to_vec()).unwrap();
+
+        assert_eq!(pdf.pages().len(), 1);
+    }
+
+    #[test]
+    fn catalog_used_as_single_page_fallback() {
+        let data = include_bytes!("../tests/fixtures/catalog-as-page.pdf");
+        let pdf = Pdf::new(data.to_vec()).unwrap();
+
+        assert_eq!(pdf.pages().len(), 1);
+    }
 }

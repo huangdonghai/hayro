@@ -74,6 +74,18 @@ impl<'a> Pages<'a> {
         Some(Self { pages, xref })
     }
 
+    pub(crate) fn new_single(
+        dict: &Dict<'a>,
+        ctx: &ReaderContext<'a>,
+        xref: &'a XRef,
+    ) -> Option<Self> {
+        let page = Page::new(dict, &PagesContext::new(), ctx, false)?;
+        Some(Self {
+            pages: vec![page],
+            xref,
+        })
+    }
+
     /// Return the xref table (of the document the pages belong to).
     pub fn xref(&self) -> &'a XRef {
         self.xref
@@ -510,7 +522,10 @@ pub(crate) mod cached {
             let ctx = ReaderContext::new(xref_reference, false);
             let pages = xref_reference
                 .get_with(xref.trailer_data().pages_ref, &ctx)
-                .and_then(|p| Pages::new(&p, &ctx, xref_reference))
+                .and_then(|p| {
+                    Pages::new(&p, &ctx, xref_reference)
+                        .or_else(|| Pages::new_single(&p, &ctx, xref_reference))
+                })
                 .or_else(|| Pages::new_brute_force(&ctx, xref_reference))?;
 
             Some(Self { pages, _xref: xref })

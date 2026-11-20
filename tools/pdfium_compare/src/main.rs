@@ -37,8 +37,12 @@ fn get_standard(font: &StandardFont) -> Option<FontData> {
         StandardFont::TimesBold => "LiberationSerif-Bold.ttf",
         StandardFont::TimesItalic => "LiberationSerif-Italic.ttf",
         StandardFont::TimesBoldItalic => "LiberationSerif-BoldItalic.ttf",
-        StandardFont::ZapfDingBats => return read_font(&assets.join("../hayro-font/assets/FoxitDingbats.pfb")),
-        StandardFont::Symbol => return read_font(&assets.join("../hayro-font/assets/FoxitSymbol.pfb")),
+        StandardFont::ZapfDingBats => {
+            return read_font(&assets.join("../../hayro-font/assets/FoxitDingbats.pfb"));
+        }
+        StandardFont::Symbol => {
+            return read_font(&assets.join("../../hayro-font/assets/FoxitSymbol.pfb"));
+        }
     };
     read_font(&assets.join(name))
 }
@@ -60,12 +64,42 @@ fn get_noto_fallback(query: &hayro::hayro_interpret::font::FallbackFontQuery) ->
     read_font(&assets_dir().join(name))
 }
 
+fn get_system_fallback(query: &hayro::hayro_interpret::font::FallbackFontQuery) -> Option<FontData> {
+    let postscript_name = query.post_script_name.as_deref().unwrap_or_default();
+    let font_name = query.font_name.as_deref().unwrap_or_default();
+    let font_family = query.font_family.as_deref().unwrap_or_default();
+    let name = format!("{postscript_name} {font_name} {font_family}").to_ascii_lowercase();
+    if !name.contains("arial") {
+        return None;
+    }
+
+    let is_bold = query.is_bold || name.contains("bold");
+    let is_italic = query.is_italic || name.contains("italic");
+    let filename = if name.contains("arial black") || name.contains("arial-black") {
+        "ariblk.ttf"
+    } else {
+        match (is_bold, is_italic) {
+            (true, true) => "arialbi.ttf",
+            (true, false) => "arialbd.ttf",
+            (false, true) => "ariali.ttf",
+            (false, false) => "arial.ttf",
+        }
+    };
+    let windows_dir = env::var_os("WINDIR")
+        .or_else(|| env::var_os("SystemRoot"))
+        .map(PathBuf::from)?;
+    read_font(&windows_dir.join("Fonts").join(filename))
+}
+
 fn interpreter_settings() -> InterpreterSettings {
     InterpreterSettings {
         font_resolver: Arc::new(|query| match query {
             FontQuery::Standard(font) => Some((get_standard(&font)?, 0)),
             FontQuery::Fallback(query) => {
                 if let Some(data) = get_noto_fallback(&query) {
+                    return Some((data, 0));
+                }
+                if let Some(data) = get_system_fallback(&query) {
                     return Some((data, 0));
                 }
                 Some((get_standard(&query.pick_standard_font())?, 0))

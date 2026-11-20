@@ -470,6 +470,7 @@ pub fn interpret<'a>(
             TypedInstruction::BeginText(_) => {
                 context.text_state_mut().text_matrix = Affine::IDENTITY;
                 context.text_state_mut().text_line_matrix = Affine::IDENTITY;
+                context.text_state_mut().clip_paths.truncate(0);
             }
             TypedInstruction::SetTextMatrix(m) => {
                 let m = Affine::new([

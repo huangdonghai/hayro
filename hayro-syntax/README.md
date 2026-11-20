@@ -69,6 +69,7 @@ The supported features include:
 - Parsing of all objects types (also in object streams).
 - Parsing and decoding PDF streams.
 - Iterating over pages as well as their content streams in a typed or untyped fashion.
+- Reading document outlines and resolving internal page destinations.
 - The crate is very lightweight, especially in comparison to other PDF crates.
 
 ## Limitations

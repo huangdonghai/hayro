@@ -281,8 +281,7 @@ pub(crate) struct DecryptorData {
 
 impl DecryptorData {
     fn is_identity(&self) -> bool {
-        self.stream_filter.cfm == DecryptorTag::None
-            && self.string_filter.cfm == DecryptorTag::None
+        self.stream_filter.cfm == DecryptorTag::None && self.string_filter.cfm == DecryptorTag::None
     }
 
     fn from_dict(dict: &Dict<'_>, default_length: u16) -> Option<Self> {

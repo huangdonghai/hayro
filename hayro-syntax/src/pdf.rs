@@ -1,10 +1,12 @@
 use crate::PdfData;
 use crate::object::Object;
+use crate::outline::{self, OutlineItem};
 use crate::page::Pages;
 use crate::page::cached::CachedPages;
 use crate::reader::Reader;
 use crate::sync::Arc;
 use crate::xref::{XRef, XRefError, fallback, root_xref};
+use alloc::vec::Vec;
 
 pub use crate::crypto::DecryptionError;
 use crate::metadata::Metadata;
@@ -108,6 +110,11 @@ impl Pdf {
         self.pages.get()
     }
 
+    /// Return the document's outline items in their declared order.
+    pub fn outlines(&self) -> Vec<OutlineItem> {
+        outline::read_outlines(&self.xref, self.pages.get())
+    }
+
     /// Return the xref of the PDF file.
     pub fn xref(&self) -> &XRef {
         &self.xref
@@ -174,6 +181,7 @@ impl PdfVersion {
 mod tests {
     use crate::object::{ObjectIdentifier, Stream};
     use crate::pdf::{Pdf, PdfVersion};
+    use core::fmt::Write;
 
     #[test]
     fn issue_49() {
@@ -223,5 +231,54 @@ mod tests {
 
         assert_eq!(pdf.pages().len(), 1);
         assert_eq!(pdf.pages()[0].render_dimensions(), (612.0, 792.0));
+    }
+
+    #[test]
+    fn outlines_preserve_hierarchy_and_resolve_destinations() {
+        let pdf = Pdf::new(pdf_with_outlines()).unwrap();
+        let outlines = pdf.outlines();
+
+        assert_eq!(outlines.len(), 2);
+        assert_eq!(outlines[0].title, "Main");
+        assert_eq!(outlines[0].page_index, Some(0));
+        assert_eq!(outlines[0].children.len(), 1);
+        assert_eq!(outlines[0].children[0].title, "Second");
+        assert_eq!(outlines[0].children[0].page_index, Some(1));
+        assert_eq!(outlines[1].title, "Last");
+        assert_eq!(outlines[1].page_index, Some(1));
+    }
+
+    fn pdf_with_outlines() -> Vec<u8> {
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R /Names << /Dests 9 0 R >> >>",
+            "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+            "<< /Type /Outlines /First 6 0 R /Last 8 0 R /Count 3 >>",
+            "<< /Title (Main) /Parent 5 0 R /Dest /firstPage /First 7 0 R /Last 7 0 R /Next 8 0 R /Count 1 >>",
+            "<< /Title (Second) /Parent 6 0 R /Dest [4 0 R /XYZ null null 1] >>",
+            "<< /Title <FEFF004C006100730074> /Parent 5 0 R /Prev 6 0 R /A << /S /GoTo /D [4 0 R /Fit] >> >>",
+            "<< /Names [(firstPage) [3 0 R /Fit]] >>",
+        ];
+        let mut data = String::from("%PDF-1.7\n");
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(data.len());
+            writeln!(data, "{} 0 obj\n{}\nendobj", index + 1, object).unwrap();
+        }
+        let xref_offset = data.len();
+        writeln!(data, "xref\n0 {}", objects.len() + 1).unwrap();
+        data.push_str("0000000000 65535 f \n");
+        for offset in offsets {
+            writeln!(data, "{offset:010} 00000 n ").unwrap();
+        }
+        writeln!(
+            data,
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF",
+            objects.len() + 1,
+            xref_offset
+        )
+        .unwrap();
+        data.into_bytes()
     }
 }

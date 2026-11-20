@@ -118,7 +118,7 @@ impl Renderer<'_> {
         props: DrawProps<'a>,
         draw_mode: &DrawMode,
     ) {
-        let fill_role = self.fill_role(path.bounding_box(), props.transform, &props.paint);
+        let fill_role = self.fill_role();
         match draw_mode {
             DrawMode::Fill(f) => {
                 Self::fill_path(self, path, props, *f, fill_role);
@@ -152,7 +152,7 @@ impl Renderer<'_> {
                     self.add_content_bounds(bbox);
                 }
 
-                let role = self.fill_role(*rect, props.transform, &props.paint);
+                let role = self.fill_role();
                 let clip_path = self.set_paint(&props.paint, || *rect, false, role);
                 if let Some(clip_path) = clip_path.as_ref() {
                     self.push_clip_path_inner(clip_path, *fill_rule);

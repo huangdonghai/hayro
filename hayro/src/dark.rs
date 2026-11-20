@@ -10,18 +10,7 @@
 //! 两个 pole 默认是 `#181a1b`（暗色纸面）和 `#e8e6e3`（亮色文字）。中性色会继承
 //! pole 的色相/饱和度，所以灰字会带一点暖调、纸面会带一点蓝绿，而不是纯黑白。
 
-use crate::hayro_interpret::font::{Glyph, GlyphRun};
-use crate::hayro_interpret::hayro_syntax::page::Page;
-use crate::hayro_interpret::{
-    BlendMode, ClipPath, Context, Device, DrawMode, DrawProps, Image, ImageDrawProps,
-    InterpreterCache, InterpreterSettings, Paint, SoftMask, interpret_page,
-};
-use crate::kurbo::{Affine, BezPath, PathEl, Rect, Shape};
 use vello_cpu::color::{AlphaColor, Srgb};
-
-const SMALL_FILL_AREA_RATIO: f64 = 0.005;
-const MAX_ROLE_CANDIDATES: usize = 512;
-const MAX_TEXT_RUNS: usize = 4096;
 
 /// A drawing role used to map PDF colors to a dark theme.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -35,18 +24,6 @@ pub enum PaintRole {
     Surface,
     /// Small filled marks such as icons, bullets, and underlines.
     Ink,
-}
-
-#[derive(Clone, Copy)]
-struct FillKey {
-    bounds: Rect,
-    color: [u8; 4],
-}
-
-/// Page-level analysis for identifying small fills behind text.
-#[derive(Clone, Default)]
-pub struct DarkRoleAnalysis {
-    text_backgrounds: Vec<FillKey>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -102,256 +79,14 @@ impl DarkTheme {
     }
 }
 
-impl DarkRoleAnalysis {
-    /// Classify a filled shape using its bounds, source color, and text context.
-    pub fn classify_fill(
-        &self,
-        bounds: Rect,
-        page_bounds: Rect,
-        color: [f32; 4],
-        dark_enabled: bool,
-    ) -> PaintRole {
-        if !dark_enabled {
-            return PaintRole::Surface;
-        }
-
-        let color_key = rgba8(color);
-        if self.text_backgrounds.iter().any(|background| {
-            rects_match(background.bounds, bounds) && colors_match(background.color, color_key)
-        }) {
-            return PaintRole::Surface;
-        }
-
-        let page_area = page_bounds.width() * page_bounds.height();
-        let fill_area = bounds.width() * bounds.height();
-        if fill_area / page_area.max(1.0) < SMALL_FILL_AREA_RATIO {
-            PaintRole::Ink
-        } else {
-            PaintRole::Surface
-        }
-    }
-}
-
-/// Analyze a page for small neutral fills that closely enclose text runs.
-pub fn analyze_dark_roles<'a>(
-    page: &'a Page<'a>,
-    cache: &InterpreterCache<'a>,
-    interpreter_settings: &InterpreterSettings,
-    transform: Affine,
-    target: Rect,
-) -> DarkRoleAnalysis {
-    let mut context = Context::new(
-        transform,
-        target,
-        cache,
-        page.xref(),
-        interpreter_settings.clone(),
-    );
-    let mut analyzer = RoleAnalyzer::new(target);
-    interpret_page(page, &mut context, &mut analyzer);
-    analyzer.finish()
-}
-
-struct FillCandidate {
-    bounds: Rect,
-    color: [u8; 4],
-}
-
-struct RoleAnalyzer {
-    target: Rect,
-    fills: Vec<FillCandidate>,
-    text_runs: Vec<Rect>,
-}
-
-impl RoleAnalyzer {
-    fn new(target: Rect) -> Self {
-        Self {
-            target,
-            fills: Vec::new(),
-            text_runs: Vec::new(),
-        }
-    }
-
-    fn record_fill(&mut self, path: &BezPath, props: &DrawProps<'_>) {
-        if props.soft_mask.is_some() || self.fills.len() >= MAX_ROLE_CANDIDATES {
-            return;
-        }
-
-        let Paint::Color(color) = &props.paint else {
-            return;
-        };
-        let color = color.to_rgba().components();
-        if !is_neutral_fill(color) || !is_simple_closed_shape(path) {
-            return;
-        }
-
-        let bounds = props.transform.transform_rect_bbox(path.bounding_box());
-        let page_area = self.target.width() * self.target.height();
-        let fill_area = bounds.width() * bounds.height();
-        if fill_area / page_area.max(1.0) >= SMALL_FILL_AREA_RATIO {
-            return;
-        }
-
-        self.fills.push(FillCandidate {
-            bounds,
-            color: rgba8(color),
-        });
-    }
-
-    fn record_text_run(&mut self, glyph_run: &GlyphRun<'_, '_>, transform: Affine) {
-        if self.text_runs.len() >= MAX_TEXT_RUNS {
-            return;
-        }
-
-        let bounds = glyph_run
-            .glyphs()
-            .iter()
-            .filter_map(|positioned| {
-                let Glyph::Outline(glyph) = &**positioned else {
-                    return None;
-                };
-                Some(
-                    (transform * positioned.transform())
-                        .transform_rect_bbox(glyph.outline().bounding_box()),
-                )
-            })
-            .reduce(|left, right| left.union(right));
-
-        if let Some(bounds) = bounds.filter(|bounds| bounds.width() > 0.0 && bounds.height() > 0.0)
-        {
-            self.text_runs.push(bounds);
-        }
-    }
-
-    fn finish(self) -> DarkRoleAnalysis {
-        let mut text_backgrounds = Vec::new();
-        for fill in self.fills {
-            if self
-                .text_runs
-                .iter()
-                .any(|text| encloses_text_run(fill.bounds, *text))
-            {
-                text_backgrounds.push(FillKey {
-                    bounds: fill.bounds,
-                    color: fill.color,
-                });
-            }
-        }
-        DarkRoleAnalysis { text_backgrounds }
-    }
-}
-
-impl<'a> Device<'a> for RoleAnalyzer {
-    fn draw_path(&mut self, path: &BezPath, props: DrawProps<'a>, mode: &DrawMode) {
-        if matches!(mode, DrawMode::Fill(_) | DrawMode::FillAndStroke(_, _)) {
-            self.record_fill(path, &props);
-        }
-    }
-
-    fn push_clip_path(&mut self, _: &ClipPath) {}
-
-    fn push_transparency_group(
-        &mut self,
-        _: f32,
-        _: Option<SoftMask<'a>>,
-        _: BlendMode,
-        _: bool,
-        _: bool,
-    ) {
-    }
-
-    fn draw_glyph_run(
-        &mut self,
-        glyph_run: &GlyphRun<'_, 'a>,
-        props: DrawProps<'a>,
-        mode: &DrawMode,
-    ) {
-        if !matches!(mode, DrawMode::Invisible) {
-            self.record_text_run(glyph_run, props.transform);
-        }
-    }
-
-    fn draw_image(&mut self, _: Image<'a, '_>, _: ImageDrawProps<'a>) {}
-
-    fn pop_clip(&mut self) {}
-
-    fn pop_transparency_group(&mut self) {}
-}
-
-fn is_neutral_fill([r, g, b, a]: [f32; 4]) -> bool {
-    let min = r.min(g).min(b);
-    let max = r.max(g).max(b);
-    a >= 0.8 && max - min <= 0.18
-}
-
-fn is_simple_closed_shape(path: &BezPath) -> bool {
-    let elements = path.elements();
-    elements.len() >= 5
-        && elements.len() <= 16
-        && matches!(elements.last(), Some(PathEl::ClosePath))
-        && elements
-            .iter()
-            .filter(|element| matches!(element, PathEl::MoveTo(_)))
-            .count()
-            == 1
-}
-
-fn encloses_text_run(fill: Rect, text: Rect) -> bool {
-    const HORIZONTAL_BLEED: f64 = 1.0;
-    const VERTICAL_BLEED: f64 = 1.5;
-    if fill.width() + 2.0 * HORIZONTAL_BLEED < text.width()
-        || fill.height() + 2.0 * VERTICAL_BLEED < text.height()
-    {
-        return false;
-    }
-
-    let line_height = text.height().max(1.0);
-    let max_horizontal_padding = (line_height * 1.25).max(2.0);
-    let max_vertical_padding = (line_height * 0.75).max(1.0);
-    let left = text.x0 - fill.x0;
-    let right = fill.x1 - text.x1;
-    let top = text.y0 - fill.y0;
-    let bottom = fill.y1 - text.y1;
-
-    left >= -HORIZONTAL_BLEED
-        && right >= -HORIZONTAL_BLEED
-        && top >= -VERTICAL_BLEED
-        && bottom >= -VERTICAL_BLEED
-        && left.max(right) <= max_horizontal_padding
-        && top.max(bottom) <= max_vertical_padding
-        && text.width() / fill.width() >= 0.25
-        && text.height() / fill.height() >= 0.2
-}
-
-fn rgba8(color: [f32; 4]) -> [u8; 4] {
-    color.map(|component| (component.clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
-}
-
-fn rects_match(left: Rect, right: Rect) -> bool {
-    const EPSILON: f64 = 0.02;
-    (left.x0 - right.x0).abs() <= EPSILON
-        && (left.y0 - right.y0).abs() <= EPSILON
-        && (left.x1 - right.x1).abs() <= EPSILON
-        && (left.y1 - right.y1).abs() <= EPSILON
-}
-
-fn colors_match(left: [u8; 4], right: [u8; 4]) -> bool {
-    left.into_iter()
-        .zip(right)
-        .all(|(left, right)| left.abs_diff(right) <= 1)
-}
-
 /// Map an RGBA color to a dark theme according to its drawing role.
 pub fn modify_color([r, g, b, a]: [f32; 4], role: PaintRole, theme: &DarkTheme) -> [f32; 4] {
     let hsl = rgb_to_hsl(r, g, b);
     let mapped = match role {
-        PaintRole::Surface => modify_bg_hsl(hsl, theme.bg_pole),
+        PaintRole::Surface | PaintRole::Border => modify_bg_hsl(hsl, theme.bg_pole),
         PaintRole::Text => modify_fg_hsl(hsl, theme.fg_pole, true),
         // 小面积的深色填充经常是图标或图形，过暗的有彩色不应被当成中性色丢掉色相。
         PaintRole::Ink => modify_fg_hsl(hsl, theme.fg_pole, false),
-        // 中性描边走边框带；有彩色描边多半是图表/插画内容，按前景处理。
-        PaintRole::Border if hsl.s < 0.24 => modify_border_hsl(hsl, theme.fg_pole, theme.bg_pole),
-        PaintRole::Border => modify_fg_hsl(hsl, theme.fg_pole, false),
     };
     let [r, g, b] = apply_filters(hsl_to_rgb(mapped.h, mapped.s, mapped.l), theme);
     [r, g, b, a]
@@ -465,27 +200,6 @@ fn modify_fg_hsl(hsl: Hsl, pole: Hsl, dark_is_neutral: bool) -> Hsl {
     let l = scale(hsl.l, 0.0, 0.5, pole.l, end);
 
     Hsl { h, s: hsl.s, l }
-}
-
-fn modify_border_hsl(hsl: Hsl, pole_fg: Hsl, pole_bg: Hsl) -> Hsl {
-    let is_dark = hsl.l < 0.5;
-    let is_neutral = hsl.l < 0.2 || hsl.s < 0.24;
-
-    let (h, s) = if is_neutral {
-        if is_dark {
-            (pole_fg.h, pole_fg.s)
-        } else {
-            (pole_bg.h, pole_bg.s)
-        }
-    } else {
-        (hsl.h, hsl.s)
-    };
-
-    Hsl {
-        h,
-        s,
-        l: scale(hsl.l, 0.0, 1.0, 0.5, 0.2),
-    }
 }
 
 fn apply_filters([mut r, mut g, mut b]: [f32; 3], theme: &DarkTheme) -> [f32; 3] {

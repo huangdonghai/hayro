@@ -70,7 +70,7 @@ mod paint;
 mod path;
 mod tiling;
 
-pub use dark::{DarkRoleAnalysis, DarkTheme, PaintRole, analyze_dark_roles, modify_color};
+pub use dark::{DarkTheme, PaintRole, modify_color};
 
 type OutlineCache = FxHashMap<(u128, u32), Option<Rc<BezPath>>>;
 
@@ -86,15 +86,10 @@ pub(crate) struct GlobalState {
     glyph_caching: bool,
     dark: Option<DarkTheme>,
     dark_cache: RefCell<FxHashMap<(u32, u8), [f32; 4]>>,
-    dark_role_analysis: DarkRoleAnalysis,
 }
 
 impl GlobalState {
-    pub(crate) fn new(
-        cache: &RenderCache<'_>,
-        settings: &RenderSettings,
-        dark_role_analysis: DarkRoleAnalysis,
-    ) -> Self {
+    pub(crate) fn new(cache: &RenderCache<'_>, settings: &RenderSettings) -> Self {
         Self {
             level: Level::new(),
             outline_cache: cache.outline_cache.clone(),
@@ -107,7 +102,6 @@ impl GlobalState {
             glyph_caching: settings.glyph_caching,
             dark: settings.dark,
             dark_cache: RefCell::new(FxHashMap::default()),
-            dark_role_analysis,
         }
     }
 }
@@ -196,30 +190,14 @@ impl<'r> Renderer<'r> {
         out
     }
 
-    /// Classify a fill using its area and proximity to text.
-    pub(crate) fn fill_role(&self, bbox: Rect, transform: Affine, paint: &Paint<'_>) -> PaintRole {
+    pub(crate) fn fill_role(&self) -> PaintRole {
         if let Some(role) = self.pattern_role {
             return role;
         }
         if self.in_type3_glyph {
             return PaintRole::Text;
         }
-        let color = match paint {
-            Paint::Color(color) => color.to_rgba().components(),
-            Paint::Pattern(_) => [0.0; 4],
-        };
-        let page = Rect::new(
-            0.0,
-            0.0,
-            f64::from(self.ctx.width()),
-            f64::from(self.ctx.height()),
-        );
-        self.global.dark_role_analysis.classify_fill(
-            transform.transform_rect_bbox(bbox),
-            page,
-            color,
-            self.global.dark.is_some(),
-        )
+        PaintRole::Surface
     }
 
     pub(crate) fn stroke_role(&self) -> PaintRole {
@@ -472,17 +450,6 @@ fn render_into_inner<'a>(
     transform: Affine,
 ) -> Option<Rect> {
     let target = Rect::new(0.0, 0.0, ctx.width() as f64, ctx.height() as f64);
-    let dark_role_analysis = if render_settings.dark.is_some() {
-        analyze_dark_roles(
-            page,
-            &cache.interpreter_cache,
-            interpreter_settings,
-            transform,
-            target,
-        )
-    } else {
-        DarkRoleAnalysis::default()
-    };
     let mut state = Context::new(
         transform,
         target,
@@ -495,7 +462,7 @@ fn render_into_inner<'a>(
     ctx.reset_filter_effect();
     ctx.set_aliasing_threshold(render_settings.aliasing_threshold);
 
-    let global = GlobalState::new(cache, render_settings, dark_role_analysis);
+    let global = GlobalState::new(cache, render_settings);
     let mut device = Renderer::new(ctx, &global);
     let crop_box = page.intersected_crop_box().to_kurbo();
     let [a, b, c, d, _, _] = transform.as_coeffs();

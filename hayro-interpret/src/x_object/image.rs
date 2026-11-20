@@ -126,7 +126,7 @@ impl<'a> ImageXObject<'a> {
     }
 
     pub(crate) fn draw<'b>(&self, context: &mut Context<'b>, device: &mut impl Device<'b>) {
-        if !context.ocg_state.is_visible() {
+        if !context.ocg_state.is_visible() || context.has_empty_clip() {
             return;
         }
 

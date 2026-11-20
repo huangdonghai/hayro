@@ -133,6 +133,12 @@ impl<'a> Context<'a> {
         fill: FillRule,
         device: &mut impl Device<'a>,
     ) {
+        if clip_path.elements().is_empty() {
+            self.push_bbox(Rect::ZERO);
+            self.stack.push_clip(ClipType::Empty);
+            return;
+        }
+
         if let Some(clip_rect) = path_as_rect(&clip_path) {
             let cur_bbox = self.bbox();
 
@@ -165,10 +171,18 @@ impl<'a> Context<'a> {
     }
 
     pub(crate) fn pop_clip(&mut self, device: &mut impl Device<'a>) {
-        if let Some(ClipType::Real) = self.stack.pop_clip() {
-            device.pop_clip();
-            self.pop_bbox();
+        match self.stack.pop_clip() {
+            Some(ClipType::Real) => {
+                device.pop_clip();
+                self.pop_bbox();
+            }
+            Some(ClipType::Empty) => self.pop_bbox(),
+            Some(ClipType::Dummy) | None => {}
         }
+    }
+
+    pub(crate) fn has_empty_clip(&self) -> bool {
+        self.stack.has_empty_clip()
     }
 
     fn pop_bbox(&mut self) {

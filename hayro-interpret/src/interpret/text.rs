@@ -84,6 +84,16 @@ pub(crate) fn show_glyph_run<'a>(ctx: &mut Context<'a>, device: &mut impl Device
         WritingMode::Vertical
     };
 
+    if matches!(
+        render_mode,
+        TextRenderingMode::Clip
+            | TextRenderingMode::FillAndClip
+            | TextRenderingMode::StrokeAndClip
+            | TextRenderingMode::FillAndStrokeAndClip
+    ) {
+        ctx.text_state_mut().has_clip = true;
+    }
+
     let clip_path = {
         let run = GlyphRun {
             glyphs: &ctx.glyph_scratch,

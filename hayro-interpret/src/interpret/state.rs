@@ -62,6 +62,7 @@ impl ActiveTransferFunction {
 pub(crate) enum ClipType {
     Dummy,
     Real,
+    Empty,
 }
 
 #[derive(Clone, Debug)]
@@ -129,6 +130,7 @@ pub(crate) struct TextState<'a> {
     pub(crate) text_line_matrix: Affine,
 
     pub(crate) clip_paths: BezPath,
+    pub(crate) has_clip: bool,
 }
 
 impl<'a> TextState<'a> {
@@ -225,6 +227,7 @@ impl Default for TextState<'_> {
             text_line_matrix: Affine::IDENTITY,
             rise: 0.0,
             clip_paths: BezPath::default(),
+            has_clip: false,
         }
     }
 }

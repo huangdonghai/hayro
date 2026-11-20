@@ -169,6 +169,12 @@ impl<'a> StateStack<'a> {
         self.clips.len()
     }
 
+    pub(crate) fn has_empty_clip(&self) -> bool {
+        self.clips
+            .last()
+            .is_some_and(|clip| matches!(clip, ClipType::Empty))
+    }
+
     pub(crate) fn snapshot(&self) -> State<'a> {
         State {
             ctm: *self.ctm(),

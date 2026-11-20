@@ -471,6 +471,7 @@ pub fn interpret<'a>(
                 context.text_state_mut().text_matrix = Affine::IDENTITY;
                 context.text_state_mut().text_line_matrix = Affine::IDENTITY;
                 context.text_state_mut().clip_paths.truncate(0);
+                context.text_state_mut().has_clip = false;
             }
             TypedInstruction::SetTextMatrix(m) => {
                 let m = Affine::new([
@@ -485,15 +486,14 @@ pub fn interpret<'a>(
                 context.text_state_mut().text_matrix = m;
             }
             TypedInstruction::EndText(_) => {
-                let has_outline = context.text_state().clip_paths.segments().next().is_some();
-
-                if has_outline {
+                if context.text_state().has_clip {
                     let clip_path = context.ctm() * context.text_state().clip_paths.clone();
 
                     context.push_clip_path(clip_path, FillRule::NonZero, device);
                 }
 
                 context.text_state_mut().clip_paths.truncate(0);
+                context.text_state_mut().has_clip = false;
             }
             TypedInstruction::TextFont(t) => {
                 let name = t.0;
@@ -614,7 +614,7 @@ pub fn interpret<'a>(
                 context.text_state_mut().rise = t.0.as_f32();
             }
             TypedInstruction::Shading(s) => {
-                if !context.ocg_state.is_visible() {
+                if !context.ocg_state.is_visible() || context.has_empty_clip() {
                     continue;
                 }
 

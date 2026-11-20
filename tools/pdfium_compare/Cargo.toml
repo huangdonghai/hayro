@@ -1,0 +1,14 @@
+[package]
+name = "pdfium-compare-render"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+hayro = { path = "../../hayro", features = ["embed-cmaps"] }
+hayro-syntax = { path = "../../hayro-syntax", features = ["std", "unsafe"] }
+image = "0.25"
+rayon = "1.11"
+walkdir = "2"

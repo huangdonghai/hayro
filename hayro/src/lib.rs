@@ -70,8 +70,7 @@ mod paint;
 mod path;
 mod tiling;
 
-pub use dark::DarkTheme;
-use dark::PaintRole;
+pub use dark::{DarkTheme, PaintRole, modify_color};
 
 type OutlineCache = FxHashMap<(u128, u32), Option<Rc<BezPath>>>;
 
@@ -186,7 +185,7 @@ impl<'r> Renderer<'r> {
             return *cached;
         }
 
-        let out = dark::modify_color(color, role, &theme);
+        let out = modify_color(color, role, &theme);
         self.global.dark_cache.borrow_mut().insert(key, out);
         out
     }

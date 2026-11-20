@@ -12,17 +12,17 @@
 
 use vello_cpu::color::{AlphaColor, Srgb};
 
-/// 一次绘制的颜色角色。
+/// A drawing role used to map PDF colors to a dark theme.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
-pub(crate) enum PaintRole {
-    /// 文字（glyph run、Type3 字形内部）。
+pub enum PaintRole {
+    /// Glyph text and text inside Type3 glyphs.
     Text,
-    /// 描边、表格线。
+    /// Strokes and borders.
     Border,
-    /// 大面积填充：页面底色、表格背景、色块。
+    /// Large filled areas such as page backgrounds and panels.
     Surface,
-    /// 小面积深色填充：图标、项目符号、矢量轮廓文字、下划线。
+    /// Small filled marks such as icons, bullets, and underlines.
     Ink,
 }
 
@@ -79,8 +79,8 @@ impl DarkTheme {
     }
 }
 
-/// 把 RGBA 分量按角色映射到暗色主题。
-pub(crate) fn modify_color([r, g, b, a]: [f32; 4], role: PaintRole, theme: &DarkTheme) -> [f32; 4] {
+/// Map an RGBA color to a dark theme according to its drawing role.
+pub fn modify_color([r, g, b, a]: [f32; 4], role: PaintRole, theme: &DarkTheme) -> [f32; 4] {
     let hsl = rgb_to_hsl(r, g, b);
     let mapped = match role {
         PaintRole::Surface => modify_bg_hsl(hsl, theme.bg_pole),

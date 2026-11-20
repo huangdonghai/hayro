@@ -222,5 +222,6 @@ mod tests {
         let pdf = Pdf::new(data.to_vec()).unwrap();
 
         assert_eq!(pdf.pages().len(), 1);
+        assert_eq!(pdf.pages()[0].render_dimensions(), (612.0, 792.0));
     }
 }

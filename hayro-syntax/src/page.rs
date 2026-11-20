@@ -79,7 +79,11 @@ impl<'a> Pages<'a> {
         ctx: &ReaderContext<'a>,
         xref: &'a XRef,
     ) -> Option<Self> {
-        let page = Page::new(dict, &PagesContext::new(), ctx, false)?;
+        let page_context = PagesContext {
+            media_box: Some(Rect::new(0.0, 0.0, 612.0, 792.0)),
+            ..PagesContext::new()
+        };
+        let page = Page::new(dict, &page_context, ctx, false)?;
         Some(Self {
             pages: vec![page],
             xref,

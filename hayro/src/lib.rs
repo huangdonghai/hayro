@@ -70,7 +70,7 @@ mod paint;
 mod path;
 mod tiling;
 
-pub use dark::{DarkTheme, PaintRole, modify_color};
+pub use dark::{DarkRoleAnalysis, DarkTheme, PaintRole, analyze_dark_roles, modify_color};
 
 type OutlineCache = FxHashMap<(u128, u32), Option<Rc<BezPath>>>;
 
@@ -86,10 +86,17 @@ pub(crate) struct GlobalState {
     glyph_caching: bool,
     dark: Option<DarkTheme>,
     dark_cache: RefCell<FxHashMap<(u32, u8), [f32; 4]>>,
+    dark_role_analysis: DarkRoleAnalysis,
+    page_inverse: Affine,
 }
 
 impl GlobalState {
-    pub(crate) fn new(cache: &RenderCache<'_>, settings: &RenderSettings) -> Self {
+    pub(crate) fn new(
+        cache: &RenderCache<'_>,
+        settings: &RenderSettings,
+        dark_role_analysis: DarkRoleAnalysis,
+        page_inverse: Affine,
+    ) -> Self {
         Self {
             level: Level::new(),
             outline_cache: cache.outline_cache.clone(),
@@ -102,6 +109,8 @@ impl GlobalState {
             glyph_caching: settings.glyph_caching,
             dark: settings.dark,
             dark_cache: RefCell::new(FxHashMap::default()),
+            dark_role_analysis,
+            page_inverse,
         }
     }
 }
@@ -190,25 +199,56 @@ impl<'r> Renderer<'r> {
         out
     }
 
-    pub(crate) fn fill_role(&self) -> PaintRole {
+    pub(crate) fn fill_role(&self, bbox: Rect, transform: Affine, paint: &Paint<'_>) -> PaintRole {
         if let Some(role) = self.pattern_role {
             return role;
         }
         if self.in_type3_glyph {
             return PaintRole::Text;
         }
-        PaintRole::Surface
+        if self.global.dark.is_none() {
+            return PaintRole::Surface;
+        }
+        let (color, fallback) = match paint {
+            Paint::Color(color) => (color.to_rgba().components(), PaintRole::Ink),
+            Paint::Pattern(_) => return PaintRole::Surface,
+        };
+        self.global.dark_role_analysis.classify_fill(
+            bbox,
+            transform,
+            self.global.page_inverse,
+            color,
+            fallback,
+        )
     }
 
-    pub(crate) fn stroke_role(&self) -> PaintRole {
+    pub(crate) fn stroke_role(
+        &self,
+        bbox: Rect,
+        transform: Affine,
+        paint: &Paint<'_>,
+        stroke: &hayro_interpret::StrokeProps,
+    ) -> PaintRole {
         if let Some(role) = self.pattern_role {
             return role;
         }
         if self.in_type3_glyph {
-            PaintRole::Text
-        } else {
-            PaintRole::Border
+            return PaintRole::Text;
         }
+        if self.global.dark.is_none() {
+            return PaintRole::Border;
+        }
+        let Paint::Color(color) = paint else {
+            return PaintRole::Ink;
+        };
+        self.global.dark_role_analysis.classify_stroke(
+            bbox,
+            transform,
+            self.global.page_inverse,
+            color.to_rgba().components(),
+            stroke.line_width,
+            PaintRole::Ink,
+        )
     }
 
     fn misses_target(&self, bbox: Rect) -> bool {
@@ -296,6 +336,7 @@ pub struct RenderCache<'a> {
     pub(crate) outline_cache: Rc<RefCell<OutlineCache>>,
     pub(crate) glyph_cache: Rc<RefCell<GlyphCache>>,
     pub(crate) hinting_cache: HintingCache,
+    dark_role_cache: RefCell<FxHashMap<(usize, u8), DarkRoleAnalysis>>,
 }
 
 impl<'a> RenderCache<'a> {
@@ -306,7 +347,36 @@ impl<'a> RenderCache<'a> {
             outline_cache: Rc::new(RefCell::new(FxHashMap::default())),
             glyph_cache: Rc::new(RefCell::new(GlyphCache::default())),
             hinting_cache: HintingCache::new(),
+            dark_role_cache: RefCell::new(FxHashMap::default()),
         }
+    }
+
+    fn dark_role_analysis(
+        &self,
+        page: &'a Page<'a>,
+        interpreter_settings: &InterpreterSettings,
+    ) -> DarkRoleAnalysis {
+        let key = (
+            page as *const Page<'_> as usize,
+            interpreter_settings.render_content.bits(),
+        );
+        if let Some(analysis) = self.dark_role_cache.borrow().get(&key) {
+            return analysis.clone();
+        }
+
+        let (width, height) = page.render_dimensions();
+        let base_transform = page.initial_transform(true).to_kurbo();
+        let analysis = analyze_dark_roles(
+            page,
+            &self.interpreter_cache,
+            interpreter_settings,
+            base_transform,
+            Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+        );
+        self.dark_role_cache
+            .borrow_mut()
+            .insert(key, analysis.clone());
+        analysis
     }
 }
 
@@ -450,6 +520,11 @@ fn render_into_inner<'a>(
     transform: Affine,
 ) -> Option<Rect> {
     let target = Rect::new(0.0, 0.0, ctx.width() as f64, ctx.height() as f64);
+    let dark_role_analysis = if render_settings.dark.is_some() {
+        cache.dark_role_analysis(page, interpreter_settings)
+    } else {
+        DarkRoleAnalysis::default()
+    };
     let mut state = Context::new(
         transform,
         target,
@@ -462,7 +537,12 @@ fn render_into_inner<'a>(
     ctx.reset_filter_effect();
     ctx.set_aliasing_threshold(render_settings.aliasing_threshold);
 
-    let global = GlobalState::new(cache, render_settings);
+    let global = GlobalState::new(
+        cache,
+        render_settings,
+        dark_role_analysis,
+        transform.inverse(),
+    );
     let mut device = Renderer::new(ctx, &global);
     let crop_box = page.intersected_crop_box().to_kurbo();
     let [a, b, c, d, _, _] = transform.as_coeffs();

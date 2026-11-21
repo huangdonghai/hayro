@@ -118,17 +118,18 @@ impl Renderer<'_> {
         props: DrawProps<'a>,
         draw_mode: &DrawMode,
     ) {
-        let fill_role = self.fill_role();
+        let fill_role = self.fill_role(path.bounding_box(), props.transform, &props.paint);
         match draw_mode {
             DrawMode::Fill(f) => {
                 Self::fill_path(self, path, props, *f, fill_role);
             }
             DrawMode::Stroke(s) => {
-                let role = self.stroke_role();
+                let role = self.stroke_role(path.bounding_box(), props.transform, &props.paint, s);
                 Self::stroke_path(self, path, props, s, false, role);
             }
             DrawMode::FillAndStroke(f, s) => {
-                let stroke_role = self.stroke_role();
+                let stroke_role =
+                    self.stroke_role(path.bounding_box(), props.transform, &props.paint, s);
                 Self::fill_path(self, path, props.clone(), *f, fill_role);
                 Self::stroke_path(self, path, props, s, false, stroke_role);
             }
@@ -152,7 +153,7 @@ impl Renderer<'_> {
                     self.add_content_bounds(bbox);
                 }
 
-                let role = self.fill_role();
+                let role = self.fill_role(*rect, props.transform, &props.paint);
                 let clip_path = self.set_paint(&props.paint, || *rect, false, role);
                 if let Some(clip_path) = clip_path.as_ref() {
                     self.push_clip_path_inner(clip_path, *fill_rule);
@@ -166,13 +167,18 @@ impl Renderer<'_> {
             }
             DrawMode::Stroke(s) => {
                 let path = rect.to_path(0.1);
-                let role = self.stroke_role();
+                let role = self.stroke_role(path.bounding_box(), props.transform, &props.paint, s);
                 Self::stroke_path(self, &path, props, s, false, role);
             }
             DrawMode::FillAndStroke(fill_rule, stroke_props) => {
                 self.draw_rect(rect, props.clone(), &DrawMode::Fill(*fill_rule));
                 let path = rect.to_path(0.1);
-                let role = self.stroke_role();
+                let role = self.stroke_role(
+                    path.bounding_box(),
+                    props.transform,
+                    &props.paint,
+                    stroke_props,
+                );
                 Self::stroke_path(self, &path, props, stroke_props, false, role);
             }
             DrawMode::Invisible => {}
